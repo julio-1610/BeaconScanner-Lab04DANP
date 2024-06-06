@@ -5,8 +5,11 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanResult
+import android.content.Intent
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
@@ -21,24 +24,23 @@ import com.idnp2024a.beaconscanner.permissions.PermissionManager
 class MainActivityBLE : AppCompatActivity() {
 
     private val TAG: String = "MainActivityBLE"
-    private var alertDialog: AlertDialog? = null
-    private lateinit var bluetoothManager: BluetoothManager
+    private var alertDialog: AlertDialog? = null //Un cuadro de diálogo para mostrar alertas al usuario.
+    private lateinit var bluetoothManager: BluetoothManager //Administrador de Bluetooth
     private lateinit var btScanner: BluetoothLeScanner
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private lateinit var txtMessage: TextView;
-    private val permissionManager = PermissionManager.from(this)
+    private val permissionManager = PermissionManager.from(this) //Objeto para gestionar los permisos.
+
+    private val rssiFilter = MovingAverageFilter(5) // Ventana de tamaño 5
+    private val btPermissions = BTPermissions(this)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         //enableEdgeToEdge()
         setContentView(R.layout.activity_main_ble)
-        /*        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-                    val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-                    v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-                    insets
-                }*/
 
-        BTPermissions(this).check()
+        //TPermissions(this).check()
+        btPermissions.check()
         initBluetooth()
 
         val btnAdversting = findViewById<Button>(R.id.btnAdversting)
@@ -48,10 +50,29 @@ class MainActivityBLE : AppCompatActivity() {
 
 
         val bleScanCallback = BleScanCallback(
-            onScanResultAction,
-            onBatchScanResultAction,
-            onScanFailedAction
+            onScanResultAction = { result, _ ->
+                result?.let {
+                    val smoothedRSSI = rssiFilter.filter(it.rssi) // USO DEL FILTRO DE MEDIA MÓVIL
+                    Log.d(TAG, "Original RSSI: ${it.rssi}, Smoothed RSSI: $smoothedRSSI") // LOG DEL FILTRO
+                    val scanRecord = it.scanRecord
+                    val beacon = Beacon(it.device.address)
+                    beacon.manufacturer = it.device.name // Asignación del fabricante directamente
+                    beacon.rssi = smoothedRSSI.toInt() // ASIGNACIÓN DEL RSSI FILTRADO
+                    if (scanRecord != null && beacon.manufacturer == "ESP32 Beacon") {
+                        scanRecord.bytes?.let { bytes -> decodeiBeacon(bytes, beacon.rssi) }
+                    }
+                }
+            },
+            onBatchScanResultAction = { results ->
+                if (results != null) {
+                    Log.d(TAG, "BatchScanResult $results")
+                }
+            },
+            onScanFailedAction = { errorCode ->
+                Log.d(TAG, "ScanFailed $errorCode")
+            }
         )
+
 
         btnAdversting.setOnClickListener {
 //            val iBeaconEmissor=IBeaconEmissor(applicationContext)
@@ -60,9 +81,22 @@ class MainActivityBLE : AppCompatActivity() {
 
         btnStart.setOnClickListener {
             if (isLocationEnabled()) {
-                bluetoothScanStart(bleScanCallback)
+                // Verifica los permisos de ubicación antes de comenzar el escaneo Bluetooth
+                permissionManager
+                    .request(Permission.Location)
+                    .rationale("Bluetooth scanning requires location access.")
+                    .checkPermission { isGranted ->
+                        if (isGranted) {
+                            bluetoothScanStart(bleScanCallback)
+                        } else {
+                            // El usuario no concedió permisos de ubicación, muestra un mensaje o solicita permisos nuevamente.
+                            // Por ejemplo, puedes mostrar un diálogo pidiendo permisos de ubicación.
+                            showLocationPermissionDeniedDialog()
+                        }
+                    }
             } else {
-                showPermissionDialog()
+                // La ubicación está desactivada, muestra un mensaje o solicita al usuario que active la ubicación.
+                showLocationSettingsDialog()
             }
         }
 
@@ -134,41 +168,6 @@ class MainActivityBLE : AppCompatActivity() {
         if (scanRecord != null && beacon.manufacturer == "ESP32 Beacon") {
             scanRecord?.bytes?.let { decodeiBeacon(it, beacon.rssi) }
 
-            /*
-            Log.d(TAG, "ScanRecord:" + scanRecord?.bytes?.let { Utils.toHexString(it) })
-            val iBeaconManufactureData =
-                scanRecord.getManufacturerSpecificData(0X004c)// fake Apple 0x004C LSB (ENDIAN_CHANGE_U16!)
-
-            if (iBeaconManufactureData != null && iBeaconManufactureData.size >= 23) {
-                Log.d(TAG, "ManufacturerSpecificData:" + Utils.toHexString(iBeaconManufactureData))
-                val iBeaconUUID = Utils.toHexString(iBeaconManufactureData.copyOfRange(2, 18))
-                val major = Integer.parseInt(
-                    Utils.toHexString(iBeaconManufactureData.copyOfRange(18, 20)),
-                    16
-                )
-                val minor = Integer.parseInt(
-                    Utils.toHexString(iBeaconManufactureData.copyOfRange(20, 22)),
-                    16
-                )
-                val txPower = Integer.parseInt(
-                    Utils.toHexString(iBeaconManufactureData.copyOfRange(22, 23)),
-                    16
-                )
-
-                beacon.type = Beacon.beaconType.iBeacon
-                beacon.uuid = iBeaconUUID
-                beacon.major = major
-                beacon.minor = minor
-
-                var beacon_manufacturer = beacon.manufacturer
-                var beacon_rssi = beacon.rssi
-                var beacon_type = beacon.type
-                Log.e(
-                    TAG,
-                    "manufacturer:$beacon_manufacturer rssi:$beacon_rssi type:$beacon_type iBeaconUUID:$iBeaconUUID major:$major minor:$minor txPower:$txPower"
-                )
-            }
-            */
         }
 
     }
@@ -229,6 +228,45 @@ class MainActivityBLE : AppCompatActivity() {
         if (!alertDialog!!.isShowing()) {
             alertDialog!!.show()
         }
+    }
+    private fun showLocationPermissionDeniedDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Location Permission Required")
+            .setMessage("This feature requires location permission. Please grant the permission in the app settings.")
+            .setPositiveButton("Settings") { _, _ ->
+                // Abre la configuración de la aplicación para que el usuario pueda conceder los permisos manualmente.
+                openAppSettings()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    private fun showLocationSettingsDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Location Services Disabled")
+            .setMessage("Location services need to be enabled for this feature. Do you want to enable them?")
+            .setPositiveButton("Settings") { _, _ ->
+                // Abre la configuración del dispositivo para que el usuario pueda habilitar la ubicación manualmente.
+                openLocationSettings()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        val uri = Uri.fromParts("package", packageName, null)
+        intent.data = uri
+        startActivity(intent)
+    }
+
+    private fun openLocationSettings() {
+        val intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+        startActivity(intent)
     }
 
 }
