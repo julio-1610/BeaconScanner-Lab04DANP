@@ -36,7 +36,7 @@ class MainActivityBLE : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main_ble)
 
-        btPermissions.check()
+        btPermissions.checkPermissions()
         initBluetooth()
 
         val btnAdversting = findViewById<Button>(R.id.btnAdversting)
