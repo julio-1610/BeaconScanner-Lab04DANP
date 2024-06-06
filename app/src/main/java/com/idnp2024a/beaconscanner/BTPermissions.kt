@@ -5,12 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import com.idnp2024a.beaconscanner.MainActivityBLE
 
@@ -19,7 +17,6 @@ class BTPermissions(private val activity: MainActivityBLE) {
     private lateinit var permissionsList: ArrayList<String>
     private lateinit var alertDialog: AlertDialog
 
-    @RequiresApi(Build.VERSION_CODES.S)
     private val permissions = arrayOf(
         android.Manifest.permission.BLUETOOTH_CONNECT,
         android.Manifest.permission.BLUETOOTH_SCAN,
