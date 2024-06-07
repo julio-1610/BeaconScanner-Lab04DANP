@@ -25,6 +25,6 @@ androidx-constraintlayout-core = { group = "androidx.constraintlayout", name = "
 android-beacon-library = { group = "org.altbeacon", name = "android-beacon-library", version.ref = "androidBeaconLibrary" }
 
 [plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
+android-application = { id = "com.android.application", version = "8.0.2" }
 jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 

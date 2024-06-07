@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
+import android.content.Context
 import android.content.Intent
 import android.location.LocationManager
 import android.net.Uri
@@ -19,7 +20,6 @@ import com.idnp2024a.beaconscanner.permissions.BTPermissions
 import com.idnp2024a.beaconscanner.permissions.Permission
 import com.idnp2024a.beaconscanner.permissions.PermissionManager
 
-
 class MainActivityBLE : AppCompatActivity() {
 
     private val TAG = "MainActivityBLE"
@@ -27,7 +27,7 @@ class MainActivityBLE : AppCompatActivity() {
     private lateinit var btScanner: BluetoothLeScanner
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private lateinit var txtMessage: TextView
-    private val permissionManager = PermissionManager.from(this)
+    private lateinit var permissionManager: PermissionManager
 
     private val rssiFilter = MovingAverageFilter(5)
     private val btPermissions = BTPermissions(this)
@@ -93,7 +93,7 @@ class MainActivityBLE : AppCompatActivity() {
     }
 
     private fun initBluetooth() {
-        bluetoothManager = getSystemService(BluetoothManager::class.java)
+        bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
 
         if (bluetoothAdapter != null) {
@@ -121,7 +121,7 @@ class MainActivityBLE : AppCompatActivity() {
     }
 
     private fun isLocationEnabled(): Boolean {
-        val locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+        val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         return LocationManagerCompat.isLocationEnabled(locationManager)
     }
 
