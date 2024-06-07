@@ -26,6 +26,8 @@ class MainActivity : AppCompatActivity() {
 
     private var btPermission = false
 
+    private val kalmanFilter = KalmanFilter(processNoise = 1e-5, measurementNoise = 1e-1, estimateError = 1.0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -33,56 +35,65 @@ class MainActivity : AppCompatActivity() {
         setUpBluetoothManager()
 
         findViewById<Button>(R.id.button).setOnClickListener {
-            if (ActivityCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.BLUETOOTH_SCAN
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                // TODO: Consider calling
-                //    ActivityCompat#requestPermissions
-                // here to request the missing permissions, and then overriding
-                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                //                                          int[] grantResults)
-                // to handle the case where the user grants the permission. See the documentation
-                // for ActivityCompat#requestPermissions for more details.
-                return@setOnClickListener
+            if (checkPermissions()) {
+                btScanner?.startScan(leScanCallback)
+            } else {
+                requestPermissions()
             }
-            btScanner?.startScan(leScanCallback)
         }
     }
 
-    private fun checkForLocationPermission() {
+    private fun checkPermissions(): Boolean {
+        val hasBluetoothScanPermission = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.BLUETOOTH_SCAN
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasBluetoothConnectPermission = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.BLUETOOTH_CONNECT
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasLocationPermission = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        return hasBluetoothScanPermission && hasBluetoothConnectPermission && hasLocationPermission
+    }
+
+    private fun requestPermissions() {
+        val permissions = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(
-                applicationContext,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+                this, Manifest.permission.BLUETOOTH_SCAN
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            val builder = AlertDialog.Builder(this)
-            builder.setTitle("This app needs location access")
-            builder.setMessage("Please grant location access so this app can detect peripherals.")
-            builder.setPositiveButton(android.R.string.ok, null)
-            builder.setOnDismissListener {
-                requestPermissions(
-                    arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),
-                    PERMISSION_REQUEST_COARSE_LOCATION
-                )
-            }
-            builder.show()
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+        }
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+
+        if (permissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), PERMISSION_REQUEST_COARSE_LOCATION)
         }
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>, grantResults: IntArray
+        requestCode: Int, permissions: Array<String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_COARSE_LOCATION) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                println("coarse location permission granted")
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                btScanner?.startScan(leScanCallback)
             } else {
                 val builder = AlertDialog.Builder(this)
                 builder.setTitle("Functionality limited")
-                builder.setMessage("Since location access has not been granted, this app will not be able to discover BLE beacons")
+                builder.setMessage("Since location and Bluetooth access have not been granted, this app will not be able to discover BLE beacons")
                 builder.setPositiveButton(android.R.string.ok, null)
                 builder.show()
             }
@@ -98,21 +109,17 @@ class MainActivity : AppCompatActivity() {
             val enableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             btActivityResultLauncher.launch(enableIntent)
         }
-
-        checkForLocationPermission()
     }
 
     private val leScanCallback: ScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            Log.d("MainActivity", "RSSI: ${result.rssi}")
-            if (ActivityCompat.checkSelfPermission(
-                    applicationContext,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                return
+            handleScanResult(result)
+        }
+
+        override fun onBatchScanResults(results: List<ScanResult>) {
+            for (result in results) {
+                handleScanResult(result)
             }
-            Log.d("MainActivity", "Device: ${result.device.name}")
         }
 
         override fun onScanFailed(errorCode: Int) {
@@ -120,34 +127,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val blueToothPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            val bluetoothManager: BluetoothManager = getSystemService(BluetoothManager::class.java)
-            val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-            btPermission = true
-
-            if (bluetoothAdapter?.isEnabled == false) {
-                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                btActivityResultLauncher.launch(enableBtIntent)
-            } else {
-                btScan()
-            }
-        } else {
-            btPermission = false
+    private fun handleScanResult(result: ScanResult) {
+        Log.d("MainActivity", "RSSI: ${result.rssi}")
+        if (ActivityCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
         }
+        val filteredRssi = kalmanFilter.filter(result.rssi.toDouble())
+        Log.d("MainActivity", "Filtered RSSI: $filteredRssi, Device: ${result.device.name}")
     }
 
     private val btActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (it.resultCode == RESULT_OK) {
-            btScan()
+            btScanner?.startScan(leScanCallback)
         }
-    }
-
-    private fun btScan() {
-        Toast.makeText(this, "BT接続できます", Toast.LENGTH_LONG).show()
     }
 }
